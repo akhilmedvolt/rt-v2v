@@ -1,0 +1,45 @@
+---
+description: Frontend WebSocket client and audio conventions
+globs: frontend/**/*.{js,html}
+alwaysApply: false
+---
+
+# Frontend conventions
+
+Vanilla JS only — no React, no bundler, no build step. `index.html` loads
+`app.js` directly. Keep the UI minimal.
+
+## Wire format (must not change without backend coordination)
+
+- Client -> server: **Int16 little-endian PCM, mono, 16 kHz**, binary frames.
+  `pcm-worklet.js` converts Float32 -> Int16; do not send Float32.
+- Server -> client: **binary MP3 chunks** consumed by `MediaSource` with
+  mime type `audio/mpeg`, plus JSON control events.
+
+```javascript
+// Capture must use a 16 kHz AudioContext
+const ctx = new AudioContext({ sampleRate: 16000 });
+```
+
+## Control events to handle
+
+| Event type            | Required client behavior                                |
+| --------------------- | ------------------------------------------------------- |
+| `ready`               | Enable Start button.                                    |
+| `partial_transcript`  | Render English transcript.                              |
+| `translation`         | Render Hindi text.                                      |
+| `latency`             | Update latency readout.                                 |
+| `stop_playback`       | Tear down current `MediaSource`, build a fresh one.     |
+| `error`               | Surface to the user; keep the socket alive.             |
+
+`stop_playback` is the interrupt signal. The client **must** drop any
+buffered MP3 and rebuild `MediaSource` — appending more chunks to the old
+one will replay stale Hindi audio.
+
+## Don't
+
+- Don't introduce a framework, transpiler, or npm dependency.
+- Don't change the sample rate without also updating `SAMPLE_RATE` in the
+  backend `.env` (webrtcvad only supports 8/16/32/48 kHz).
+- Don't buffer audio chunks in JS arrays before appending — feed them to
+  `SourceBuffer` as they arrive to keep first-syllable latency low.

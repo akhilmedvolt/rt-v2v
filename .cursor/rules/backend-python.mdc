@@ -1,0 +1,57 @@
+---
+description: Backend asyncio, queue, and interrupt conventions
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend conventions
+
+## Queues are bounded and drop-oldest
+
+Never `await queue.put(...)` directly from a producer — always go through
+`Session.offer(queue, item)`, which evicts the oldest item on overflow.
+In a realtime translator, freshness beats completeness.
+
+```python
+# BAD - blocks the producer when downstream is slow
+await self.session.translation_queue.put(item)
+
+# GOOD - drop-oldest, never blocks
+await self.session.offer(self.session.translation_queue, item)
+```
+
+## Every queued item carries a `gen` tag
+
+`Session.current_gen` is bumped on every interrupt. Workers must skip stale
+items at the top of their loop instead of processing them.
+
+```python
+item = await self.session.asr_queue.get()
+if item.gen != self.session.current_gen:
+    continue  # stale, user has already started a new utterance
+```
+
+When emitting a downstream item, copy `gen` from the input item — do not
+read `current_gen` again (it may have changed mid-await).
+
+## Cancellable external calls
+
+Any `await` on Whisper, GPT, or Edge TTS must race against
+`session.interrupt_event` (see `workers/asr.py::_race_interrupt`) so the user
+talking again immediately cancels the in-flight network call.
+
+## No blocking calls
+
+- Use `AsyncOpenAI`, not `OpenAI`.
+- Never `time.sleep` — use `asyncio.sleep`.
+- VAD frame processing is CPU-light and runs inline in the WS receive loop;
+  do not move it to a thread.
+
+## Logging
+
+```python
+logger = logging.getLogger(__name__)  # module-level, never print()
+```
+
+Log at `INFO` for lifecycle events (start/stop, interrupt, latency) and
+`DEBUG` for per-item drops/evictions.

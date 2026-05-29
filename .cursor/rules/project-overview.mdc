@@ -1,0 +1,37 @@
+---
+description: Project overview, architecture, and global conventions
+alwaysApply: true
+---
+
+# Real-Time English -> Hindi Voice Translator
+
+A FastAPI WebSocket pipeline: browser mic -> VAD-segmented utterances ->
+Whisper ASR -> `gpt-4o-mini` translation -> Edge TTS -> MP3 back to browser.
+One `Session` per WebSocket owns five bounded `asyncio.Queue`s and four
+worker tasks (ASR, translator, TTS, playback dispatcher).
+
+## Where things live
+
+- `backend/app.py` — FastAPI app + `/ws/audio` endpoint + static mount.
+- `backend/session.py` — `Session`: queues, workers, interrupt protocol.
+- `backend/vad.py` — `webrtcvad` utterance segmenter.
+- `backend/messages.py` — dataclasses passed between queues.
+- `backend/workers/{asr,translator,tts}.py` — one async worker per stage.
+- `backend/prompts.py` — translation system prompt + few-shots.
+- `backend/config.py` — env loading and tunables.
+- `frontend/{index.html,app.js,pcm-worklet.js}` — minimal vanilla JS client.
+
+## Non-goals (do not add)
+
+The brief explicitly excluded auth, deployment infra, Kubernetes, databases,
+monitoring stacks, and UI polish. Do not introduce them unless asked.
+
+## Universal conventions
+
+- Python 3.11+; use `from __future__ import annotations` in new modules.
+- All I/O is `asyncio` — never block the event loop with sync HTTP or
+  `time.sleep`. Use `asyncio.sleep` / async OpenAI / async file APIs.
+- Use the module logger (`logger = logging.getLogger(__name__)`), never
+  `print`, in backend code.
+- Keep latency the primary success metric. Target end-to-end is ~1-1.5 s
+  from utterance end to first Hindi MP3 chunk.

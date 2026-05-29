@@ -66,6 +66,9 @@ async def tts_worker(session: "Session") -> None:
                     first_chunk_emitted = True
                 await session.offer(session.playback_queue, playback)
         except Exception as exc:
+            if session.closing:
+                logger.debug("TTS aborted during shutdown: %s", exc)
+                continue
             logger.exception("TTS synthesis failed: %s", exc)
             await session.send_event(
                 {"type": "error", "stage": "tts", "message": str(exc)}

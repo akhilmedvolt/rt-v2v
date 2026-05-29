@@ -41,7 +41,10 @@ def _pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
 async def _race_interrupt(coro, interrupt: asyncio.Event):
     """Run `coro` but cancel it as soon as the interrupt event fires.
 
-    Returns the coro's result, or None if interrupted.
+    Returns the coro's result, or None if interrupted. If the caller itself is
+    cancelled (e.g. the worker task is shutting down), the inner task is still
+    cancelled and awaited so we never leak an orphaned API call that could
+    later hit a closed HTTP client.
     """
 
     task = asyncio.create_task(coro)
@@ -52,15 +55,15 @@ async def _race_interrupt(coro, interrupt: asyncio.Event):
         )
         if task in done:
             return task.result()
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
         return None
     finally:
-        if not wait_task.done():
-            wait_task.cancel()
+        for t in (task, wait_task):
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
 
 
 async def asr_worker(session: "Session", client: AsyncOpenAI) -> None:
@@ -85,6 +88,9 @@ async def asr_worker(session: "Session", client: AsyncOpenAI) -> None:
                     temperature=0.0,
                 )
             except Exception as exc:
+                if session.closing:
+                    logger.debug("Whisper call aborted during shutdown: %s", exc)
+                    return None
                 logger.exception("Whisper transcription failed: %s", exc)
                 await session.send_event(
                     {"type": "error", "stage": "asr", "message": str(exc)}

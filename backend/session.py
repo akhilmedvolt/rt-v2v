@@ -62,6 +62,11 @@ class Session:
         self._first_chunk_seen: dict[int, bool] = {}
         self._tasks: list[asyncio.Task[Any]] = []
         self._openai = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._closing = False
+
+    @property
+    def closing(self) -> bool:
+        return self._closing
 
     async def start(self) -> None:
         self._tasks.append(asyncio.create_task(asr_worker(self, self._openai), name="asr"))
@@ -72,6 +77,10 @@ class Session:
         self._tasks.append(asyncio.create_task(self._playback_dispatcher(), name="playback"))
 
     async def close(self) -> None:
+        self._closing = True
+        # Set the interrupt so any worker waiting on _race_interrupt unblocks
+        # and exits cleanly, instead of being cancelled mid-await.
+        self.interrupt_event.set()
         for t in self._tasks:
             t.cancel()
         for t in self._tasks:

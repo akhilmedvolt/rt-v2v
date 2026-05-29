@@ -45,6 +45,9 @@ async def translator_worker(session: "Session", client: AsyncOpenAI) -> None:
                     max_tokens=400,
                 )
             except Exception as exc:
+                if session.closing:
+                    logger.debug("Translator call aborted during shutdown: %s", exc)
+                    return None
                 logger.exception("Translation failed: %s", exc)
                 await session.send_event(
                     {"type": "error", "stage": "translate", "message": str(exc)}
